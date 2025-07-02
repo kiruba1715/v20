@@ -50,6 +50,7 @@ export interface Order {
 
 export interface OrderMessage {
   id: string;
+  orderId?: string;
   sender: 'customer' | 'vendor';
   senderName: string;
   message: string;
