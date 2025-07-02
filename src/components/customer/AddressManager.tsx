@@ -2,12 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { Plus, MapPin, Edit, Trash2, Home } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { Address, ServiceArea } from '../../types';
+import { 
+  getServiceAreas, 
+  createAddress, 
+  updateAddress, 
+  deleteAddress, 
+  getUserAddresses 
+} from '../../services/database';
 
 export const AddressManager: React.FC = () => {
   const { user, updateUser } = useAuth();
   const [showForm, setShowForm] = useState(false);
   const [editingAddress, setEditingAddress] = useState<Address | null>(null);
   const [serviceAreas, setServiceAreas] = useState<ServiceArea[]>([]);
+  const [addresses, setAddresses] = useState<Address[]>([]);
+  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     label: '',
     street: '',
@@ -19,11 +28,50 @@ export const AddressManager: React.FC = () => {
   });
 
   useEffect(() => {
-    const savedAreas = localStorage.getItem('serviceAreas');
-    if (savedAreas) {
-      setServiceAreas(JSON.parse(savedAreas));
+    loadServiceAreas();
+    loadAddresses();
+  }, [user]);
+
+  const loadServiceAreas = async () => {
+    try {
+      const { data, error } = await getServiceAreas();
+      if (!error && data) {
+        const areas: ServiceArea[] = data.map(area => ({
+          id: area.id,
+          name: area.name,
+          vendorId: area.vendor_id || '',
+          vendorName: area.vendor_name,
+          createdDate: area.created_at,
+        }));
+        setServiceAreas(areas);
+      }
+    } catch (error) {
+      console.error('Error loading service areas:', error);
     }
-  }, []);
+  };
+
+  const loadAddresses = async () => {
+    if (!user) return;
+    
+    try {
+      const { data, error } = await getUserAddresses(user.id);
+      if (!error && data) {
+        const userAddresses: Address[] = data.map(addr => ({
+          id: addr.id,
+          label: addr.label,
+          street: addr.street,
+          city: addr.city,
+          state: addr.state,
+          zipCode: addr.zip_code,
+          isDefault: addr.is_default,
+          areaId: addr.area_id || '',
+        }));
+        setAddresses(userAddresses);
+      }
+    } catch (error) {
+      console.error('Error loading addresses:', error);
+    }
+  };
 
   const resetForm = () => {
     setFormData({
@@ -39,40 +87,58 @@ export const AddressManager: React.FC = () => {
     setShowForm(false);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!formData.areaId) {
       alert('Please select a service area');
       return;
     }
+
+    if (!user) return;
     
-    const addresses = user?.addresses || [];
+    setLoading(true);
     
-    if (editingAddress) {
-      // Update existing address
-      const updatedAddresses = addresses.map(addr =>
-        addr.id === editingAddress.id ? { ...addr, ...formData } : addr
-      );
-      updateUser({ addresses: updatedAddresses });
-    } else {
-      // Add new address
-      const newAddress: Address = {
-        id: Date.now().toString(),
-        ...formData,
-      };
-      
-      // If this is the first address or set as default, make it default
-      if (addresses.length === 0 || formData.isDefault) {
-        const updatedAddresses = addresses.map(addr => ({ ...addr, isDefault: false }));
-        updatedAddresses.push({ ...newAddress, isDefault: true });
-        updateUser({ addresses: updatedAddresses });
+    try {
+      if (editingAddress) {
+        // Update existing address
+        const { error } = await updateAddress(editingAddress.id, {
+          label: formData.label,
+          street: formData.street,
+          city: formData.city,
+          state: formData.state,
+          zipCode: formData.zipCode,
+          areaId: formData.areaId,
+          isDefault: formData.isDefault,
+        });
+        
+        if (!error) {
+          await loadAddresses();
+        }
       } else {
-        updateUser({ addresses: [...addresses, newAddress] });
+        // Add new address
+        const { error } = await createAddress({
+          userId: user.id,
+          label: formData.label,
+          street: formData.street,
+          city: formData.city,
+          state: formData.state,
+          zipCode: formData.zipCode,
+          areaId: formData.areaId,
+          isDefault: formData.isDefault || addresses.length === 0,
+        });
+        
+        if (!error) {
+          await loadAddresses();
+        }
       }
+      
+      resetForm();
+    } catch (error) {
+      console.error('Error saving address:', error);
+    } finally {
+      setLoading(false);
     }
-    
-    resetForm();
   };
 
   const handleEdit = (address: Address) => {
@@ -89,27 +155,40 @@ export const AddressManager: React.FC = () => {
     setShowForm(true);
   };
 
-  const handleDelete = (addressId: string) => {
-    const addresses = user?.addresses || [];
-    const updatedAddresses = addresses.filter(addr => addr.id !== addressId);
-    updateUser({ addresses: updatedAddresses });
+  const handleDelete = async (addressId: string) => {
+    try {
+      const { error } = await deleteAddress(addressId);
+      if (!error) {
+        await loadAddresses();
+      }
+    } catch (error) {
+      console.error('Error deleting address:', error);
+    }
   };
 
-  const setAsDefault = (addressId: string) => {
-    const addresses = user?.addresses || [];
-    const updatedAddresses = addresses.map(addr => ({
-      ...addr,
-      isDefault: addr.id === addressId,
-    }));
-    updateUser({ addresses: updatedAddresses });
+  const setAsDefault = async (addressId: string) => {
+    try {
+      // First, set all addresses to non-default
+      for (const addr of addresses) {
+        if (addr.isDefault) {
+          await updateAddress(addr.id, { isDefault: false });
+        }
+      }
+      
+      // Then set the selected address as default
+      const { error } = await updateAddress(addressId, { isDefault: true });
+      if (!error) {
+        await loadAddresses();
+      }
+    } catch (error) {
+      console.error('Error setting default address:', error);
+    }
   };
 
   const getAreaName = (areaId: string) => {
     const area = serviceAreas.find(a => a.id === areaId);
     return area ? `${area.name} - ${area.vendorName}` : 'Unknown Area';
   };
-
-  const addresses = user?.addresses || [];
 
   return (
     <div className="space-y-6">
@@ -226,9 +305,10 @@ export const AddressManager: React.FC = () => {
             <div className="flex space-x-3">
               <button
                 type="submit"
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                disabled={loading}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
-                {editingAddress ? 'Update Address' : 'Add Address'}
+                {loading ? 'Saving...' : editingAddress ? 'Update Address' : 'Add Address'}
               </button>
               <button
                 type="button"

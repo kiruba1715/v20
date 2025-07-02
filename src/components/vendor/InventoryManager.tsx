@@ -2,12 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Package, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { InventoryItem } from '../../types';
+import {
+  getInventoryByVendor,
+  createInventoryItem,
+  updateInventoryItem,
+  deleteInventoryItem,
+} from '../../services/database';
 
 export const InventoryManager: React.FC = () => {
   const { user } = useAuth();
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     price: '',
@@ -16,24 +23,29 @@ export const InventoryManager: React.FC = () => {
   });
 
   useEffect(() => {
-    const savedInventory = localStorage.getItem('inventory');
-    if (savedInventory) {
-      const allInventory = JSON.parse(savedInventory);
-      const vendorInventory = allInventory.filter((item: InventoryItem) => item.vendorId === user?.id);
-      setInventory(vendorInventory);
-    } else {
-      // Initialize with default inventory for this vendor
-      if (user?.id) {
-        const defaultInventory: InventoryItem[] = [
-          { id: `${user.id}-1`, name: 'Pure Water', price: 45, stock: 50, description: 'Premium purified water', vendorId: user.id },
-          { id: `${user.id}-2`, name: 'Spring Water', price: 55, stock: 30, description: 'Natural spring water', vendorId: user.id },
-          { id: `${user.id}-3`, name: 'Alkaline Water', price: 65, stock: 25, description: 'pH balanced alkaline water', vendorId: user.id },
-        ];
-        setInventory(defaultInventory);
-        localStorage.setItem('inventory', JSON.stringify(defaultInventory));
-      }
-    }
+    loadInventory();
   }, [user]);
+
+  const loadInventory = async () => {
+    if (!user) return;
+    
+    try {
+      const { data, error } = await getInventoryByVendor(user.id);
+      if (!error && data) {
+        const items: InventoryItem[] = data.map(item => ({
+          id: item.id,
+          name: item.name,
+          price: item.price,
+          stock: item.stock,
+          description: item.description,
+          vendorId: item.vendor_id,
+        }));
+        setInventory(items);
+      }
+    } catch (error) {
+      console.error('Error loading inventory:', error);
+    }
+  };
 
   const resetForm = () => {
     setFormData({
@@ -46,46 +58,47 @@ export const InventoryManager: React.FC = () => {
     setShowForm(false);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    const allInventory = JSON.parse(localStorage.getItem('inventory') || '[]');
+    if (!user) return;
     
-    if (editingItem) {
-      // Update existing item
-      const updatedItem = {
-        ...editingItem,
-        name: formData.name,
-        price: parseFloat(formData.price),
-        stock: parseInt(formData.stock),
-        description: formData.description,
-      };
+    setLoading(true);
+    
+    try {
+      if (editingItem) {
+        // Update existing item
+        const { error } = await updateInventoryItem(editingItem.id, {
+          name: formData.name,
+          price: parseFloat(formData.price),
+          stock: parseInt(formData.stock),
+          description: formData.description,
+        });
+        
+        if (!error) {
+          await loadInventory();
+        }
+      } else {
+        // Add new item
+        const { error } = await createInventoryItem({
+          vendorId: user.id,
+          name: formData.name,
+          price: parseFloat(formData.price),
+          stock: parseInt(formData.stock),
+          description: formData.description,
+        });
+        
+        if (!error) {
+          await loadInventory();
+        }
+      }
       
-      const updatedAllInventory = allInventory.map((item: InventoryItem) =>
-        item.id === editingItem.id ? updatedItem : item
-      );
-      
-      const vendorInventory = updatedAllInventory.filter((item: InventoryItem) => item.vendorId === user?.id);
-      setInventory(vendorInventory);
-      localStorage.setItem('inventory', JSON.stringify(updatedAllInventory));
-    } else {
-      // Add new item
-      const newItem: InventoryItem = {
-        id: `${user?.id}-${Date.now()}`,
-        name: formData.name,
-        price: parseFloat(formData.price),
-        stock: parseInt(formData.stock),
-        description: formData.description,
-        vendorId: user?.id || '',
-      };
-      
-      const updatedAllInventory = [...allInventory, newItem];
-      const vendorInventory = [...inventory, newItem];
-      setInventory(vendorInventory);
-      localStorage.setItem('inventory', JSON.stringify(updatedAllInventory));
+      resetForm();
+    } catch (error) {
+      console.error('Error saving inventory item:', error);
+    } finally {
+      setLoading(false);
     }
-    
-    resetForm();
   };
 
   const handleEdit = (item: InventoryItem) => {
@@ -99,32 +112,37 @@ export const InventoryManager: React.FC = () => {
     setShowForm(true);
   };
 
-  const handleDelete = (itemId: string) => {
-    const allInventory = JSON.parse(localStorage.getItem('inventory') || '[]');
-    const updatedAllInventory = allInventory.filter((item: InventoryItem) => item.id !== itemId);
-    const vendorInventory = updatedAllInventory.filter((item: InventoryItem) => item.vendorId === user?.id);
-    setInventory(vendorInventory);
-    localStorage.setItem('inventory', JSON.stringify(updatedAllInventory));
+  const handleDelete = async (itemId: string) => {
+    try {
+      const { error } = await deleteInventoryItem(itemId);
+      if (!error) {
+        await loadInventory();
+      }
+    } catch (error) {
+      console.error('Error deleting inventory item:', error);
+    }
   };
 
-  const updateStock = (itemId: string, newStock: number) => {
-    const allInventory = JSON.parse(localStorage.getItem('inventory') || '[]');
-    const updatedAllInventory = allInventory.map((item: InventoryItem) =>
-      item.id === itemId ? { ...item, stock: newStock } : item
-    );
-    const vendorInventory = updatedAllInventory.filter((item: InventoryItem) => item.vendorId === user?.id);
-    setInventory(vendorInventory);
-    localStorage.setItem('inventory', JSON.stringify(updatedAllInventory));
+  const updateStock = async (itemId: string, newStock: number) => {
+    try {
+      const { error } = await updateInventoryItem(itemId, { stock: newStock });
+      if (!error) {
+        await loadInventory();
+      }
+    } catch (error) {
+      console.error('Error updating stock:', error);
+    }
   };
 
-  const updatePrice = (itemId: string, newPrice: number) => {
-    const allInventory = JSON.parse(localStorage.getItem('inventory') || '[]');
-    const updatedAllInventory = allInventory.map((item: InventoryItem) =>
-      item.id === itemId ? { ...item, price: newPrice } : item
-    );
-    const vendorInventory = updatedAllInventory.filter((item: InventoryItem) => item.vendorId === user?.id);
-    setInventory(vendorInventory);
-    localStorage.setItem('inventory', JSON.stringify(updatedAllInventory));
+  const updatePrice = async (itemId: string, newPrice: number) => {
+    try {
+      const { error } = await updateInventoryItem(itemId, { price: newPrice });
+      if (!error) {
+        await loadInventory();
+      }
+    } catch (error) {
+      console.error('Error updating price:', error);
+    }
   };
 
   const lowStockItems = inventory.filter(item => item.stock < 50);
@@ -220,9 +238,10 @@ export const InventoryManager: React.FC = () => {
             <div className="flex space-x-3">
               <button
                 type="submit"
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                disabled={loading}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
-                {editingItem ? 'Update Product' : 'Add Product'}
+                {loading ? 'Saving...' : editingItem ? 'Update Product' : 'Add Product'}
               </button>
               <button
                 type="button"

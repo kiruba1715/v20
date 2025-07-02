@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { LogIn, UserPlus, Droplets, MapPin, User } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { ServiceArea } from '../types';
+import { getServiceAreas } from '../services/database';
 
 interface AuthFormProps {
   onSuccess: () => void;
@@ -29,12 +30,27 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
   const { login, register } = useAuth();
 
   useEffect(() => {
-    // Load service areas
-    const savedAreas = localStorage.getItem('serviceAreas');
-    if (savedAreas) {
-      setServiceAreas(JSON.parse(savedAreas));
-    }
+    // Load service areas from database
+    loadServiceAreas();
   }, []);
+
+  const loadServiceAreas = async () => {
+    try {
+      const { data, error } = await getServiceAreas();
+      if (!error && data) {
+        const areas: ServiceArea[] = data.map(area => ({
+          id: area.id,
+          name: area.name,
+          vendorId: area.vendor_id || '',
+          vendorName: area.vendor_name,
+          createdDate: area.created_at,
+        }));
+        setServiceAreas(areas);
+      }
+    } catch (error) {
+      console.error('Error loading service areas:', error);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,7 +81,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
 
         let areaId = selectedAreaId;
         
-        // If vendor, create new service area
+        // If vendor, check if area name already exists
         if (userType === 'vendor') {
           const existingArea = serviceAreas.find(area => 
             area.name.toLowerCase() === newAreaName.toLowerCase()
@@ -76,19 +92,6 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
             setLoading(false);
             return;
           }
-
-          areaId = Date.now().toString();
-          const newArea: ServiceArea = {
-            id: areaId,
-            name: newAreaName.trim(),
-            vendorId: '', // Will be set after user creation
-            vendorName: formData.name,
-            createdDate: new Date().toISOString(),
-          };
-          
-          const updatedAreas = [...serviceAreas, newArea];
-          setServiceAreas(updatedAreas);
-          localStorage.setItem('serviceAreas', JSON.stringify(updatedAreas));
         }
 
         const userData = {

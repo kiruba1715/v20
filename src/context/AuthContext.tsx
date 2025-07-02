@@ -14,6 +14,7 @@ import {
   deleteServiceArea,
   createAddress,
   getUserAddresses,
+  getServiceAreas,
 } from '../services/database';
 
 interface AuthContextType {
@@ -37,7 +38,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     getCurrentUser().then(async (authUser) => {
       if (authUser) {
         // Get user data from our users table
-        const { data: userData } = await getUserByUserId(authUser.email || '');
+        const { data: userData } = await getUserByUserId(authUser.email?.replace('@aquaflow.local', '') || '');
         if (userData) {
           // Get user addresses if customer
           let addresses: Address[] = [];
